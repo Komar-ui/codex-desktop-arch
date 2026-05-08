@@ -22,7 +22,7 @@
 
         codexDmg = pkgs.fetchurl {
           url = "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg";
-          hash = "sha256-WSs2iN4Ojk0Ky2FlGsOc8CayZaFHio9Wse+YbpFUE2Y=";
+          hash = "sha256-KvrWUJgRYbuG/YFSIc/pdkRhGRK3fDqfKj10O7rjFck=";
         };
 
         electronLibs = with pkgs; [
@@ -149,7 +149,7 @@ codex_nixos_add_runtime_library_dirs' "${installDir}/start.sh"
 
         codexDesktopPayload = pkgs.stdenv.mkDerivation {
           pname = "codex-desktop-payload";
-          version = "unstable-2026-05-02";
+          version = "26.506.21252";
           src = sourceRoot;
           __structuredAttrs = true;
 
@@ -170,7 +170,7 @@ codex_nixos_add_runtime_library_dirs' "${installDir}/start.sh"
 
           outputHashAlgo = "sha256";
           outputHashMode = "recursive";
-          outputHash = "sha256-5bB5LHtOL0x3XAaUrRKRTTxsovHP6VVsgv/dcSfriGs=";
+          outputHash = "sha256-hLXQTYTcOQVuWCsxoI+tNdVqipLPRbVpYQN1BaXjxWI=";
           unsafeDiscardReferences.out = true;
 
           dontConfigure = true;
@@ -185,6 +185,7 @@ codex_nixos_add_runtime_library_dirs' "${installDir}/start.sh"
             export NIX_SSL_CERT_FILE="$SSL_CERT_FILE"
             export npm_config_cafile="$SSL_CERT_FILE"
             export CARGO_HOME="$TMPDIR/cargo-home"
+            export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
             mkdir -p "$HOME" "$npm_config_cache" "$CARGO_HOME"
 
             source_dir="$TMPDIR/codex-source"
@@ -232,7 +233,7 @@ NODE
 
         codexDesktop = pkgs.stdenv.mkDerivation {
           pname = "codex-desktop";
-          version = "unstable-2026-05-02";
+          version = "26.506.21252";
           src = codexDesktopPayload;
 
           nativeBuildInputs = [
@@ -250,6 +251,12 @@ NODE
             mkdir -p "$out/opt"
             cp -aT "$src/opt/codex-desktop" "$out/opt/codex-desktop"
             chmod -R u+w "$out/opt/codex-desktop"
+            rm -rf "$out/opt/codex-desktop/resources/node-runtime"
+            ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/resources/node-runtime"
+            if [ -e "$out/opt/codex-desktop/update-builder/node-runtime" ]; then
+              rm -rf "$out/opt/codex-desktop/update-builder/node-runtime"
+              ln -s ${pkgs.nodejs} "$out/opt/codex-desktop/update-builder/node-runtime"
+            fi
 
             resources_dir="$out/opt/codex-desktop/resources"
             (cd "$resources_dir/app-extracted" && find . -type f | LC_ALL=C sort | sed 's#^\./##') > "$TMPDIR/app.asar.ordering"
@@ -320,6 +327,7 @@ NODE
 
             cd "$source_dir"
             export CODEX_INSTALL_DIR="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
+            export CODEX_MANAGED_NODE_SOURCE="${pkgs.nodejs}"
             ${pkgs.bash}/bin/bash "$source_dir/install.sh" "$source_dir/Codex.dmg" "$@"
 
             install_dir="''${CODEX_INSTALL_DIR:-$root_dir/codex-app}"
