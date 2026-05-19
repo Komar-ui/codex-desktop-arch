@@ -10,8 +10,8 @@ Categories=Development;IDE;
 MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
 Keywords=codex;openai;ai;coding;
 StartupNotify=true
-StartupWMClass=Codex
-X-GNOME-WMClass=Codex
+StartupWMClass=codex-desktop
+X-GNOME-WMClass=codex-desktop
 Icon=codex-desktop
 Actions=NewInstance;
 

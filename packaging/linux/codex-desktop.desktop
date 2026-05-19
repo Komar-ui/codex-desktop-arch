@@ -8,8 +8,8 @@ Type=Application
 Categories=Development;
 MimeType=x-scheme-handler/codex;x-scheme-handler/codex-browser-sidebar;
 StartupNotify=true
-StartupWMClass=Codex
-X-GNOME-WMClass=Codex
+StartupWMClass=codex-desktop
+X-GNOME-WMClass=codex-desktop
 Actions=NewInstance;CheckForUpdates;InstallReadyUpdate;
 
 [Desktop Action NewInstance]
