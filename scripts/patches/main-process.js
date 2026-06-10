@@ -10,6 +10,33 @@ const {
 } = require("./shared.js");
 
 const LINUX_TITLEBAR_OVERLAY_HEIGHT = 30;
+const LINUX_TITLEBAR_OVERLAY_HELPER = "codexLinuxTitleBarOverlay";
+
+function linuxTitlebarOverlayHelperSource(
+  electronAlias,
+  lightBackgroundAlias,
+  lightSymbolAlias,
+  darkSymbolAlias,
+) {
+  return `function ${LINUX_TITLEBAR_OVERLAY_HELPER}(e=1){return{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*e)}}`;
+}
+
+function ensureLinuxTitlebarOverlayHelper(source, anchorText, helperSource) {
+  if (source.includes(`function ${LINUX_TITLEBAR_OVERLAY_HELPER}(`)) {
+    return source;
+  }
+
+  const anchorIndex = source.indexOf(anchorText);
+  if (anchorIndex === -1) {
+    return null;
+  }
+
+  return (
+    source.slice(0, anchorIndex + anchorText.length) +
+    helperSource +
+    source.slice(anchorIndex + anchorText.length)
+  );
+}
 
 // Main-process patches adapt Electron shell behavior: windows, tray, menu,
 // single-instance handling, file manager integration, and packaged runtime glue.
@@ -93,9 +120,18 @@ function applyLinuxWindowOptionsPatch(currentSource, iconAsset) {
 }
 
 function applyLinuxNativeTitlebarPatch(currentSource) {
-  const patchedPrimaryTitlebarRegex =
-    /===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:([A-Za-z_$][\w$]*)\.nativeTheme\.shouldUseDarkColors\?(?:`#[0-9A-Fa-f]{6}`|[A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),symbolColor:\1\.nativeTheme\.shouldUseDarkColors\?([A-Za-z_$][\w$]*):([A-Za-z_$][\w$]*),height:Math\.round\(((?:[A-Za-z_$][\w$]*|\d+(?:\.\d+)?)?)\*[A-Za-z_$][\w$]*\)\}\}/;
+  const patchedPrimaryTitlebarRegex = new RegExp(
+    `===\`linux\`\\?\\{titleBarStyle:\`hidden\`,titleBarOverlay:${LINUX_TITLEBAR_OVERLAY_HELPER}\\(([A-Za-z_$][\\w$]*)\\)\\}`,
+  );
   const alreadyPatchedTitlebarMatch = currentSource.match(patchedPrimaryTitlebarRegex);
+  const helperFunctionRegex = new RegExp(
+    'function ' +
+      escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER) +
+      '\\([^)]*\\)\\{return\\{color:([A-Za-z_$][\\w$]*)\\.nativeTheme\\.shouldUseDarkColors\\?`#111111`:([A-Za-z_$][\\w$]*),symbolColor:\\1\\.nativeTheme\\.shouldUseDarkColors\\?([A-Za-z_$][\\w$]*):([A-Za-z_$][\\w$]*),height:Math\\.round\\(' +
+      LINUX_TITLEBAR_OVERLAY_HEIGHT +
+      '\\*[A-Za-z_$][\\w$]*\\)\\}\\}',
+  );
+  const helperFunctionMatch = currentSource.match(helperFunctionRegex);
 
   const primaryTitlebarRegex =
     /case`primary`:return ([A-Za-z_$][\w$]*)===`darwin`\?([A-Za-z_$][\w$]*)\?\{titleBarStyle:`hiddenInset`,trafficLightPosition:([A-Za-z_$][\w$]*)\(([A-Za-z_$][\w$]*)\)\}:\{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:\3\(\4\)\}:\1===`win32`(\|\|\1===`linux`)?\?\{titleBarStyle:`hidden`,titleBarOverlay:([A-Za-z_$][\w$]*)\(\4\)\}:\{titleBarStyle:`default`\};/g;
@@ -109,8 +145,6 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   let electronAlias;
   let lightSymbolAlias;
   let darkSymbolAlias;
-  let overlayHeightAlias;
-  let darkBackgroundAlias;
   let lightBackgroundAlias;
 
   if (primaryTitlebarMatch != null) {
@@ -128,26 +162,39 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
       return currentSource;
     }
 
-    [, electronAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] = overlayHelperMatch;
-    [, , , darkBackgroundAlias, lightBackgroundAlias] = linuxBackgroundMatch;
+    [, electronAlias, lightSymbolAlias, darkSymbolAlias] = overlayHelperMatch;
+    [, , , , lightBackgroundAlias] = linuxBackgroundMatch;
     const replacement =
-      `case\`primary\`:return ${platformAlias}===\`darwin\`?${opaqueWindowsAlias}?{titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:{vibrancy:\`menu\`,titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias})}:${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,titleBarOverlay:{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*${zoomAlias})}}:{titleBarStyle:\`default\`};`;
+      `case\`primary\`:return ${platformAlias}===\`darwin\`?${opaqueWindowsAlias}?{titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:{vibrancy:\`menu\`,titleBarStyle:\`hiddenInset\`,trafficLightPosition:${trafficLightAlias}(${zoomAlias})}:${platformAlias}===\`win32\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${overlayHelperAlias}(${zoomAlias})}:${platformAlias}===\`linux\`?{titleBarStyle:\`hidden\`,titleBarOverlay:${LINUX_TITLEBAR_OVERLAY_HELPER}(${zoomAlias})}:{titleBarStyle:\`default\`};`;
 
     primaryTitlebarRegex.lastIndex = 0;
     patchedSource = patchedSource.replace(primaryTitlebarRegex, replacement);
-  } else {
-    [, electronAlias, lightBackgroundAlias, lightSymbolAlias, darkSymbolAlias, overlayHeightAlias] =
-      alreadyPatchedTitlebarMatch;
-    darkBackgroundAlias = "`#111111`";
-    patchedSource = patchedSource.replace(
-      /(===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?)(?:`#[0-9A-Fa-f]{6}`|[A-Za-z_$][\w$]*)(:[A-Za-z_$][\w$]*,symbolColor:)/,
-      "$1`#111111`$2",
+    patchedSource = ensureLinuxTitlebarOverlayHelper(
+      patchedSource,
+      overlayHelperMatch[0],
+      linuxTitlebarOverlayHelperSource(
+        electronAlias,
+        lightBackgroundAlias,
+        lightSymbolAlias,
+        darkSymbolAlias,
+      ),
     );
+    if (patchedSource == null) {
+      console.warn("WARN: Could not insert Linux titleBarOverlay helper — skipping Linux native titlebar patch");
+      return currentSource;
+    }
+  } else if (helperFunctionMatch != null) {
+    [, electronAlias, lightBackgroundAlias, lightSymbolAlias, darkSymbolAlias] = helperFunctionMatch;
+  } else {
+    console.warn("WARN: Could not derive Linux titleBarOverlay helper aliases — skipping Linux native titlebar patch");
+    return currentSource;
   }
 
   if (
     patchedSource.includes("process.platform!==`win32`&&process.platform!==`linux`") &&
-    /setTitleBarOverlay\(process\.platform===`linux`\?\{color:[A-Za-z_$][\w$]*\.nativeTheme\.shouldUseDarkColors\?`#111111`:/.test(patchedSource)
+    new RegExp(
+      `setTitleBarOverlay\\(process\\.platform===\`linux\`\\?${escapeRegExp(LINUX_TITLEBAR_OVERLAY_HELPER)}\\(`,
+    ).test(patchedSource)
   ) {
     return patchedSource;
   }
@@ -161,19 +208,21 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
       "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
   );
   let overlaySyncMatch = patchedSource.match(overlaySyncRegex);
+  let overlaySyncReplacementRegex = overlaySyncRegex;
   if (overlaySyncMatch == null) {
     const existingLinuxOverlaySyncRegex = new RegExp(
       "installWindowsTitleBarOverlaySync\\(([A-Za-z_$][\\w$]*),([A-Za-z_$][\\w$]*)\\)\\{if\\(\\(process\\.platform!==`win32`&&process\\.platform!==`linux`\\)\\|\\|\\2!==`primary`\\)return;let ([A-Za-z_$][\\w$]*)=\\(\\)=>\\{\\1\\.isDestroyed\\(\\)\\|\\|\\1\\.setTitleBarOverlay\\(process\\.platform===`linux`\\?\\{color:" +
         escapedElectronAlias +
         "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,symbolColor:" +
         escapedElectronAlias +
-        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,height:Math\\.round\\([A-Za-z_$][\\w$]*\\*this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\}:([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
+        "\\.nativeTheme\\.shouldUseDarkColors\\?[A-Za-z_$][\\w$]*:[A-Za-z_$][\\w$]*,height:Math\\.round\\((?:[A-Za-z_$][\\w$]*|\\d+(?:\\.\\d+)?)\\*this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\}:([A-Za-z_$][\\w$]*)\\(this\\.windowZooms\\.get\\(\\1\\.id\\)\\)\\)\\};return " +
         escapedElectronAlias +
         "\\.nativeTheme\\.on\\(`updated`,\\3\\),\\3\\(\\),\\(\\)=>\\{" +
         escapedElectronAlias +
         "\\.nativeTheme\\.off\\(`updated`,\\3\\)\\}\\}",
     );
     overlaySyncMatch = patchedSource.match(existingLinuxOverlaySyncRegex);
+    overlaySyncReplacementRegex = existingLinuxOverlaySyncRegex;
   }
   if (overlaySyncMatch == null) {
     if (patchedSource.includes("installWindowsTitleBarOverlaySync")) {
@@ -183,11 +232,9 @@ function applyLinuxNativeTitlebarPatch(currentSource) {
   }
 
   const [, windowAlias, windowTypeAlias, updateAlias, windowsOverlayHelperAlias] = overlaySyncMatch;
-  const linuxOverlay =
-    `{color:${electronAlias}.nativeTheme.shouldUseDarkColors?\`#111111\`:${lightBackgroundAlias},symbolColor:${electronAlias}.nativeTheme.shouldUseDarkColors?${lightSymbolAlias}:${darkSymbolAlias},height:Math.round(${LINUX_TITLEBAR_OVERLAY_HEIGHT}*this.windowZooms.get(${windowAlias}.id))}`;
   const overlaySyncReplacement =
-    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${linuxOverlay}:${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
-  const replacedSource = patchedSource.replace(overlaySyncRegex, overlaySyncReplacement);
+    `installWindowsTitleBarOverlaySync(${windowAlias},${windowTypeAlias}){if((process.platform!==\`win32\`&&process.platform!==\`linux\`)||${windowTypeAlias}!==\`primary\`)return;let ${updateAlias}=()=>{${windowAlias}.isDestroyed()||${windowAlias}.setTitleBarOverlay(process.platform===\`linux\`?${LINUX_TITLEBAR_OVERLAY_HELPER}(this.windowZooms.get(${windowAlias}.id)):${windowsOverlayHelperAlias}(this.windowZooms.get(${windowAlias}.id)))};return ${electronAlias}.nativeTheme.on(\`updated\`,${updateAlias}),${updateAlias}(),()=>{${electronAlias}.nativeTheme.off(\`updated\`,${updateAlias})}}`;
+  const replacedSource = patchedSource.replace(overlaySyncReplacementRegex, overlaySyncReplacement);
   if (replacedSource !== patchedSource) {
     return replacedSource;
   }

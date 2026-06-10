@@ -1311,19 +1311,38 @@ test("uses the frameless native Codex titlebar for primary Linux windows", () =>
   ].join("");
   const patched = applyPatchTwice(applyLinuxNativeTitlebarPatch, source);
 
-  assert.match(patched, /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(30\*r\)\}\}/);
+  assert.match(
+    patched,
+    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(30\*e\)\}\}/,
+  );
+  assert.match(
+    patched,
+    /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay\(r\)\}/,
+  );
   assert.doesNotMatch(patched, /n===`win32`\?\{titleBarStyle:`hidden`,titleBarOverlay:b2\(r\)\}:\{titleBarStyle:`default`\}/);
   assert.doesNotMatch(patched, /n===`win32`\|\|n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:b2\(r\)\}/);
 });
 
-test("recognizes current Linux native titlebar literal color as already patched", () => {
-  const source =
-    "function T3({appearance:e,opaqueWindowSurfaceEnabled:t,platform:n,windowZoom:r=1}){switch(e){case`primary`:return n===`darwin`?t?{titleBarStyle:`hiddenInset`,trafficLightPosition:a3(r)}:{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:a3(r)}:n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:o3(r)}:n===`linux`?{titleBarStyle:`hidden`,titleBarOverlay:{color:r.nativeTheme.shouldUseDarkColors?`#111111`:K4,symbolColor:r.nativeTheme.shouldUseDarkColors?i3:r3,height:Math.round(30*r)}}:{titleBarStyle:`default`}}}";
+test("uses a module-scoped Linux native titlebar helper when aliases shadow Electron", () => {
+  const source = [
+    "function A3(e){return e===`avatarOverlay`}",
+    "function I3({platform:e,appearance:t,opaqueWindowsEnabled:n,prefersDarkColors:r}){return n&&!A3(t)&&(e===`darwin`||e===`win32`)?{backgroundColor:r?L4:K4,backgroundMaterial:e===`win32`?`none`:null}:e===`linux`&&!A3(t)?{backgroundColor:r?L4:K4,backgroundMaterial:null}:{backgroundColor:W4,backgroundMaterial:null}}",
+    "function o3(e=1){return{color:W4,symbolColor:r.nativeTheme.shouldUseDarkColors?i3:r3,height:Math.round(g3*e)}}",
+    "function T3({appearance:e,opaqueWindowSurfaceEnabled:t,platform:n,windowZoom:r=1}){switch(e){case`primary`:return n===`darwin`?t?{titleBarStyle:`hiddenInset`,trafficLightPosition:a3(r)}:{vibrancy:`menu`,titleBarStyle:`hiddenInset`,trafficLightPosition:a3(r)}:n===`win32`?{titleBarStyle:`hidden`,titleBarOverlay:o3(r)}:{titleBarStyle:`default`};}}",
+  ].join("");
   const { value, warnings } = captureWarns(() =>
     applyPatchTwice(applyLinuxNativeTitlebarPatch, source),
   );
 
-  assert.equal(value, source);
+  assert.match(
+    value,
+    /function codexLinuxTitleBarOverlay\(e=1\)\{return\{color:r\.nativeTheme\.shouldUseDarkColors\?`#111111`:K4,symbolColor:r\.nativeTheme\.shouldUseDarkColors\?i3:r3,height:Math\.round\(30\*e\)\}\}/,
+  );
+  assert.match(
+    value,
+    /n===`linux`\?\{titleBarStyle:`hidden`,titleBarOverlay:codexLinuxTitleBarOverlay\(r\)\}/,
+  );
+  assert.doesNotMatch(value, /titleBarOverlay:\{color:r\.nativeTheme\.shouldUseDarkColors/);
   assert.deepEqual(warnings, []);
 });
 
@@ -1343,7 +1362,7 @@ test("updates the Linux native titlebar overlay when nativeTheme changes", () =>
   );
   assert.match(
     patched,
-    /e\.setTitleBarOverlay\(process\.platform===`linux`\?\{color:a\.nativeTheme\.shouldUseDarkColors\?`#111111`:o2,symbolColor:a\.nativeTheme\.shouldUseDarkColors\?v2:_2,height:Math\.round\(30\*this\.windowZooms\.get\(e\.id\)\)\}:b2\(this\.windowZooms\.get\(e\.id\)\)\)/,
+    /e\.setTitleBarOverlay\(process\.platform===`linux`\?codexLinuxTitleBarOverlay\(this\.windowZooms\.get\(e\.id\)\):b2\(this\.windowZooms\.get\(e\.id\)\)\)/,
   );
   assert.doesNotMatch(patched, /webContents\.executeJavaScript\(/);
   assert.doesNotMatch(patched, /data-codex-window-type/);
