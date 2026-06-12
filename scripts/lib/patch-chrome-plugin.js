@@ -517,12 +517,6 @@ patchFile(path.join(scriptsDir, "browser-client.mjs"), [
     newText: String.raw`let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return (await codexLinuxFilterBrowserBackends(t)).sort(codexLinuxBackendCompare).map(({browser:r})=>r)}async function codexLinuxFilterBrowserBackends(e){let t=e.some(r=>r.browser.info.type==="extension"&&r.userTabCount>0);if(!t)return e;let r=e.filter(n=>n.browser.info.type!=="extension"||n.userTabCount>0),n=e.filter(o=>o.browser.info.type==="extension"&&o.userTabCount===0);return await codexLinuxCloseDiscardedBrowserBackends(n),r}async function codexLinuxCloseDiscardedBrowserBackends(e){await Promise.all(e.map(async({browser:t})=>{try{await t.api.close()}catch{}}))}function codexLinuxBackendCompare`,
     alreadyText: "codexLinuxCloseDiscardedBrowserBackends",
   },
-  {
-    label: "Linux idle Chrome profile filtering closes discarded backends",
-    oldText: String.raw`let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return codexLinuxFilterBrowserBackends(t).sort(codexLinuxBackendCompare).map(({browser:r})=>r)}function codexLinuxFilterBrowserBackends(e){let t=e.some(r=>r.browser.info.type==="extension"&&r.userTabCount>0);return t?e.filter(r=>r.browser.info.type!=="extension"||r.userTabCount>0):e}function codexLinuxBackendCompare`,
-    newText: String.raw`let t=await Promise.all(e.map(async(r,n)=>({browser:r,index:n,userTabCount:await codexLinuxExtensionUserTabCount(r)})));return (await codexLinuxFilterBrowserBackends(t)).sort(codexLinuxBackendCompare).map(({browser:r})=>r)}async function codexLinuxFilterBrowserBackends(e){let t=e.some(r=>r.browser.info.type==="extension"&&r.userTabCount>0);if(!t)return e;let r=e.filter(n=>n.browser.info.type!=="extension"||n.userTabCount>0),n=e.filter(o=>o.browser.info.type==="extension"&&o.userTabCount===0);return await codexLinuxCloseDiscardedBrowserBackends(n),r}async function codexLinuxCloseDiscardedBrowserBackends(e){await Promise.all(e.map(async({browser:t})=>{try{await t.api.close()}catch{}}))}function codexLinuxBackendCompare`,
-    alreadyText: "codexLinuxCloseDiscardedBrowserBackends",
-  },
 ]);
 
 patchFileFirstMatch(path.join(scriptsDir, "browser-client.mjs"), {
