@@ -93,6 +93,8 @@ const {
   sourceInfo,
 } = require("./lib/build-info.js");
 const {
+  criticalFailuresFromReport,
+  optionalDriftFromReport,
   summarizePatchReport,
 } = require("./lib/patch-report.js");
 const {
@@ -5147,5 +5149,314 @@ test("patcher CLI writes --report-json output", () => {
     assert.ok(report.patches.some((patch) => patch.name === "main-process-ui"));
   } finally {
     fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+function writeCorePatchFixture(root, relativeDir, descriptorSource) {
+  const patchDir = path.join(root, relativeDir);
+  fs.mkdirSync(patchDir, { recursive: true });
+  fs.writeFileSync(path.join(patchDir, "patch.js"), descriptorSource);
+}
+
+test("engine catches a throwing optional patch and continues with later patches", () => {
+  const coreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-optional-core-"));
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-optional-app-"));
+  try {
+    writeCorePatchFixture(coreRoot, "sample/throwing", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"throwing-optional-sample\",",
+      "  phase: \"main-bundle\",",
+      "  ciPolicy: \"optional\",",
+      "  order: 100,",
+      "  apply: () => { throw new Error(\"boom-optional\"); },",
+      "};",
+    ].join("\n"));
+    writeCorePatchFixture(coreRoot, "sample/following", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"following-optional-sample\",",
+      "  phase: \"main-bundle\",",
+      "  ciPolicy: \"optional\",",
+      "  order: 200,",
+      "  apply: (source) => source.replace(\"codexLinuxFollowUp()\", \"codexLinuxFollowedUp()\"),",
+      "};",
+    ].join("\n"));
+
+    const buildDir = path.join(tempApp, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "codexLinuxFollowUp()");
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempApp, { report, corePatchRoot: coreRoot }));
+
+    const throwing = report.patches.find((patch) => patch.name === "throwing-optional-sample");
+    assert.equal(throwing?.status, "skipped-optional");
+    assert.equal(throwing?.error, true);
+    assert.match(throwing?.reason ?? "", /boom-optional/);
+
+    const following = report.patches.find((patch) => patch.name === "following-optional-sample");
+    assert.equal(following?.status, "applied", "engine must continue after an optional patch throws");
+    assert.match(fs.readFileSync(path.join(buildDir, "main.js"), "utf8"), /codexLinuxFollowedUp/);
+
+    assert.ok(
+      !criticalFailuresFromReport(report).some((failure) => failure.name === "throwing-optional-sample"),
+    );
+    assert.ok(
+      !validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("throwing-optional-sample:"),
+      ),
+    );
+  } finally {
+    fs.rmSync(coreRoot, { recursive: true, force: true });
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("engine records a throwing critical patch as failed-required without aborting", () => {
+  const coreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-critical-core-"));
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-critical-app-"));
+  try {
+    writeCorePatchFixture(coreRoot, "sample/critical", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"throwing-critical-sample\",",
+      "  phase: \"main-bundle\",",
+      "  ciPolicy: \"required-upstream\",",
+      "  order: 100,",
+      "  apply: () => { throw new Error(\"boom-critical\"); },",
+      "};",
+    ].join("\n"));
+
+    const buildDir = path.join(tempApp, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    const originalSource = "codexLinuxCriticalFixture()";
+    fs.writeFileSync(path.join(buildDir, "main.js"), originalSource);
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempApp, { report, corePatchRoot: coreRoot }));
+
+    const entry = report.patches.find((patch) => patch.name === "throwing-critical-sample");
+    assert.equal(entry?.status, "failed-required");
+    assert.equal(entry?.error, true);
+    assert.match(entry?.reason ?? "", /boom-critical/);
+    assert.equal(
+      fs.readFileSync(path.join(buildDir, "main.js"), "utf8"),
+      originalSource,
+      "a throwing patch must contribute no partial edit",
+    );
+
+    assert.ok(
+      criticalFailuresFromReport(report).some((failure) => failure.name === "throwing-critical-sample"),
+    );
+    assert.ok(
+      validateReport(report, "upstream-build").some((failure) =>
+        failure.startsWith("throwing-critical-sample:"),
+      ),
+    );
+  } finally {
+    fs.rmSync(coreRoot, { recursive: true, force: true });
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("a throwing webview-asset patch leaves no partially patched assets", () => {
+  const coreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-asset-core-"));
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-asset-app-"));
+  try {
+    writeCorePatchFixture(coreRoot, "sample/asset", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"throwing-asset-sample\",",
+      "  phase: \"webview-asset\",",
+      "  ciPolicy: \"optional\",",
+      "  order: 100,",
+      "  pattern: /^demo-.*\\.js$/,",
+      "  apply: (source) => {",
+      "    if (source.includes(\"second\")) { throw new Error(\"boom-asset\"); }",
+      "    return source.replace(\"first\", \"first-patched\");",
+      "  },",
+      "};",
+    ].join("\n"));
+
+    const buildDir = path.join(tempApp, ".vite", "build");
+    const assetsDir = path.join(tempApp, "webview", "assets");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "codexLinuxAssetFixture()");
+    fs.writeFileSync(path.join(assetsDir, "demo-a.js"), "first asset");
+    fs.writeFileSync(path.join(assetsDir, "demo-b.js"), "second asset");
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempApp, { report, corePatchRoot: coreRoot }));
+
+    const entry = report.patches.find((patch) => patch.name === "throwing-asset-sample");
+    assert.equal(entry?.status, "skipped-optional");
+    assert.equal(entry?.error, true);
+    assert.equal(fs.readFileSync(path.join(assetsDir, "demo-a.js"), "utf8"), "first asset");
+    assert.equal(fs.readFileSync(path.join(assetsDir, "demo-b.js"), "utf8"), "second asset");
+  } finally {
+    fs.rmSync(coreRoot, { recursive: true, force: true });
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("tray close-to-tray patch failure is engine-caught and does not abort patching", () => {
+  // Recognizable-but-unpatchable shape: both markers present, gate shape absent —
+  // applyLinuxTrayCloseSettingPatch throws, the engine must absorb it.
+  const source = "canHideLastLocalWindowToTray /* drifted */ console.log(`Launching app`)";
+  assert.throws(() => applyLinuxTrayCloseSettingPatch(source), /tray settings patch failed/);
+
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-tray-close-throw-app-"));
+  try {
+    const buildDir = path.join(tempApp, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), source);
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempApp, { report }));
+
+    const entry = report.patches.find((patch) => patch.name === "linux-tray-close-setting");
+    assert.equal(entry?.status, "skipped-optional");
+    assert.equal(entry?.error, true);
+    assert.ok(
+      !criticalFailuresFromReport(report).some((failure) => failure.name === "linux-tray-close-setting"),
+    );
+  } finally {
+    fs.rmSync(tempApp, { recursive: true, force: true });
+  }
+});
+
+test("criticalFailuresFromReport agrees with validateReport and skips non-applicable statuses", () => {
+  const report = {
+    patches: [
+      { name: "req-bad", status: "failed-required", ciPolicy: "required-upstream", reason: "anchor drifted" },
+      { name: "req-good", status: "applied", ciPolicy: "required-upstream" },
+      { name: "req-not-applicable", status: "skipped-target", ciPolicy: "required-upstream" },
+      { name: "opt-bad", status: "skipped-optional", ciPolicy: "optional", reason: "optional drift" },
+    ],
+  };
+
+  assert.deepEqual(criticalFailuresFromReport(report), [
+    { name: "req-bad", status: "failed-required", reason: "anchor drifted" },
+  ]);
+  assert.deepEqual(optionalDriftFromReport(report), [
+    { name: "opt-bad", status: "skipped-optional", reason: "optional drift" },
+  ]);
+
+  const failures = validateReport(report, "upstream-build");
+  assert.ok(failures.some((failure) => failure.startsWith("req-bad:")));
+  assert.ok(!failures.some((failure) => failure.startsWith("req-not-applicable:")));
+  assert.ok(!failures.some((failure) => failure.startsWith("opt-bad:")));
+});
+
+test("patchMainBundleSource survives a throwing optional patch without a report", () => {
+  const coreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-throwing-no-report-core-"));
+  try {
+    writeCorePatchFixture(coreRoot, "sample/throwing", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"throwing-no-report-sample\",",
+      "  phase: \"main-bundle\",",
+      "  ciPolicy: \"optional\",",
+      "  order: 100,",
+      "  apply: () => { throw new Error(\"boom-no-report\"); },",
+      "};",
+    ].join("\n"));
+
+    const source = "codexLinuxNoReportFixture()";
+    const { value: patched } = captureWarns(() =>
+      patchMainBundleSource(source, null, { corePatchRoot: coreRoot }),
+    );
+    assert.equal(patched, source);
+  } finally {
+    fs.rmSync(coreRoot, { recursive: true, force: true });
+  }
+});
+
+test("patcher CLI --enforce-critical exits non-zero with an aggregated message", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-enforce-critical-cli-test-"));
+  try {
+    const buildDir = path.join(tempRoot, ".vite", "build");
+    const assetsDir = path.join(tempRoot, "webview", "assets");
+    const reportPath = path.join(tempRoot, "reports", "patch-report.json");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.mkdirSync(assetsDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(buildDir, "main.js"),
+      [
+        mainBundlePrefix,
+        "process.platform===`win32`&&k.removeMenu(),",
+        alreadyOpaqueBackgroundBundle,
+        fileManagerBundle,
+        trayBundleFixture(),
+        singleInstanceBundleFixture(),
+      ].join(""),
+    );
+    fs.writeFileSync(path.join(tempRoot, "package.json"), JSON.stringify({ name: "codex" }));
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        path.join(__dirname, "patch-linux-window-ui.js"),
+        "--enforce-critical",
+        "--report-json",
+        reportPath,
+        tempRoot,
+      ],
+      { encoding: "utf8" },
+    );
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Critical patch failures \(\d+\):/);
+    assert.match(result.stderr, /failed-required/);
+    // The report must still be written for CI artifact upload despite the failure.
+    const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+    assert.ok(criticalFailuresFromReport(report).length > 0);
+
+    // Without the flag the same fixture must keep exiting 0 (fail-soft default).
+    const lenient = spawnSync(
+      process.execPath,
+      [path.join(__dirname, "patch-linux-window-ui.js"), tempRoot],
+      { encoding: "utf8" },
+    );
+    assert.equal(lenient.status, 0, lenient.stderr);
+  } finally {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  }
+});
+
+test("a disabled patch is recorded as skipped-disabled and never counts as a critical failure", () => {
+  const coreRoot = fs.mkdtempSync(path.join(os.tmpdir(), "codex-disabled-core-"));
+  const tempApp = fs.mkdtempSync(path.join(os.tmpdir(), "codex-disabled-app-"));
+  try {
+    writeCorePatchFixture(coreRoot, "sample/disabled", [
+      "\"use strict\";",
+      "module.exports = {",
+      "  id: \"disabled-required-sample\",",
+      "  phase: \"main-bundle\",",
+      "  ciPolicy: \"required-upstream\",",
+      "  order: 100,",
+      "  enabled: () => false,",
+      "  apply: () => { throw new Error(\"must never run\"); },",
+      "};",
+    ].join("\n"));
+
+    const buildDir = path.join(tempApp, ".vite", "build");
+    fs.mkdirSync(buildDir, { recursive: true });
+    fs.writeFileSync(path.join(buildDir, "main.js"), "codexLinuxDisabledFixture()");
+
+    const report = createPatchReport();
+    captureWarns(() => patchExtractedApp(tempApp, { report, corePatchRoot: coreRoot }));
+
+    const entry = report.patches.find((patch) => patch.name === "disabled-required-sample");
+    assert.equal(entry?.status, "skipped-disabled");
+    assert.ok(
+      !criticalFailuresFromReport(report).some((failure) => failure.name === "disabled-required-sample"),
+      "a disabled patch is not applicable, so it must not fail the build",
+    );
+  } finally {
+    fs.rmSync(coreRoot, { recursive: true, force: true });
+    fs.rmSync(tempApp, { recursive: true, force: true });
   }
 });
