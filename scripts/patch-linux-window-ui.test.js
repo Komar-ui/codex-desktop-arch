@@ -3544,6 +3544,35 @@ test("extends app-server startup waits in current manager signals bundle", () =>
   assert.match(patched, /i=codexLinuxAppServerBackfillTimeoutMs\(e,i\);let a=si\(t\)/);
 });
 
+test("keeps current app-server backfill helpers visible outside the Sentry handler", () => {
+  const source =
+    "function fi(e,t){let n=hi(t.originalException);return n==null?e:{...e,...n,extra:{...e.extra,...n.extra}}}var gi=e(oi(),1),_i=z({code:Pe([He(),I()]),message:I().min(1)}).passthrough(),vi=class{requestLifecycleListeners=new Set;requestPromises=new Map;createRequest(e,t,n){let r=F(V()),i=n?.timeoutMs??0,a=si(t),o=this.requestPromises.size,s=Date.now();return{request:{id:r,method:e,params:t},conversationId:a,pending:o,startedAtMs:s,timeoutMs:i}}};";
+
+  const { value: patched, warnings } = captureWarns(() =>
+    applyPatchTwice(applyLinuxAppServerBackfillWaitPatch, source),
+  );
+
+  assert.deepEqual(warnings, []);
+  assert.match(
+    patched,
+    /^function codexLinuxIsStateDbBackfillMessage\(e\)[\s\S]*function fi\(e,t\)\{let n=hi\(t\.originalException\);/,
+  );
+  assert.doesNotMatch(
+    patched,
+    /function fi\(e,t\)\{let n=hi\(t\.originalException\);function codexLinuxIsStateDbBackfillMessage/,
+  );
+  assert.match(patched, /i=codexLinuxAppServerBackfillTimeoutMs\(e,i\);let a=si\(t\)/);
+
+  const helperPrefix = patched.slice(0, patched.indexOf("function fi("));
+  const context = {};
+  vm.runInNewContext(
+    `${helperPrefix};startupTimeout=codexLinuxAppServerBackfillTimeoutMs("thread/start",3e4);turnTimeout=codexLinuxAppServerBackfillTimeoutMs("turn/start",3e4);`,
+    context,
+  );
+  assert.equal(context.startupTimeout, 3e5);
+  assert.equal(context.turnTimeout, 3e4);
+});
+
 test("skips app-server timeout rewrite when the helper insertion anchor drifts", () => {
   const source =
     "class RequestClient{createRequest(e,t,n){let r=P(B()),i=n?.timeoutMs??0,a=Da(t),o=this.requestPromises.size;return{request:{id:r,method:e,params:t},conversationId:a,pending:o,timeoutMs:i}}}";
