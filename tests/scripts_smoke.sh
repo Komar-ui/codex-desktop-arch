@@ -3576,6 +3576,7 @@ EOF
         capture && /^}/ { exit }
     ' "$REPO_DIR/launcher/start.sh.template" >> "$probe"
     cat >> "$probe" <<'EOF'
+unset CODEX_LINUX_USER_PATH
 unset PATH
 prepend_managed_node_runtime_to_path
 [ "$PATH" = "$MANAGED_NODE_BIN_DIR" ] || exit 2
