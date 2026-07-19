@@ -1,0 +1,71 @@
+name: Build Arch package
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    container:
+      image: archlinux:latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm
+          pacman -S --needed --noconfirm \
+            base-devel \
+            git \
+            curl \
+            wget \
+            nodejs \
+            npm \
+            pnpm \
+            rust \
+            cargo \
+            python \
+            jq \
+            p7zip \
+            unzip \
+            squashfs-tools \
+            libarchive \
+            file
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build application
+        env:
+          MAX_BUILD_THREADS: "2"
+        run: |
+          make build-app-fresh
+
+      - name: Build Arch package
+        env:
+          MAX_BUILD_THREADS: "2"
+          PACKAGE_WITH_UPDATER: "1"
+        run: |
+          make pacman
+
+      - name: Show result
+        run: |
+          ls -lah dist/
+          test -n "$(find dist -maxdepth 1 -name '*.pkg.tar.*' -print -quit)"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-desktop-arch-${{ github.run_number }}
+          path: dist/*.pkg.tar.*
+          if-no-files-found: error
+          retention-days: 14
