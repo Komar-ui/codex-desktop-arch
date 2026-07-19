@@ -4,9 +4,6 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "0 4 * * *"
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
@@ -41,26 +38,40 @@ jobs:
             libarchive \
             file
 
+          useradd --create-home --shell /bin/bash builder
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build application
-        env:
-          MAX_BUILD_THREADS: "2"
+      - name: Give workspace to builder
         run: |
-          make build-app-fresh
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          mkdir -p /home/builder/.cache
+          chown -R builder:builder /home/builder
+
+      - name: Build application
+        run: |
+          runuser -u builder -- env \
+            HOME=/home/builder \
+            MAX_BUILD_THREADS=2 \
+            GITHUB_ACTIONS=true \
+            GITHUB_RUN_ID="$GITHUB_RUN_ID" \
+            GITHUB_RUN_ATTEMPT="$GITHUB_RUN_ATTEMPT" \
+            bash -lc 'cd "'"$GITHUB_WORKSPACE"'" && make build-app-fresh'
 
       - name: Build Arch package
-        env:
-          MAX_BUILD_THREADS: "2"
-          PACKAGE_WITH_UPDATER: "1"
         run: |
-          make pacman
+          runuser -u builder -- env \
+            HOME=/home/builder \
+            MAX_BUILD_THREADS=2 \
+            PACKAGE_WITH_UPDATER=1 \
+            bash -lc 'cd "'"$GITHUB_WORKSPACE"'" && make pacman'
 
-      - name: Show result
+      - name: Verify package
         run: |
           ls -lah dist/
-          test -n "$(find dist -maxdepth 1 -name '*.pkg.tar.*' -print -quit)"
+          find dist -maxdepth 1 -type f -name '*.pkg.tar.*' -print
+          test -n "$(find dist -maxdepth 1 -type f -name '*.pkg.tar.*' -print -quit)"
 
       - name: Upload Arch package
         uses: actions/upload-artifact@v4
